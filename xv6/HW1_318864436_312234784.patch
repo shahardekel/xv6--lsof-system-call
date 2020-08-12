@@ -1,0 +1,163 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..9192b12 100644
+--- a/Makefile
++++ b/Makefile
+@@ -180,6 +180,7 @@ UPROGS=\
+ 	_stressfs\
+ 	_usertests\
+ 	_wc\
++	_lsof\
+ 	_zombie\
+ 
+ fs.img: mkfs README $(UPROGS)
+@@ -249,7 +250,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ 
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+-	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
++	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c lsof.c zombie.c\
+ 	printf.c umalloc.c\
+ 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+diff --git a/defs.h b/defs.h
+index 82fb982..2d52a11 100644
+--- a/defs.h
++++ b/defs.h
+@@ -120,6 +120,7 @@ void            userinit(void);
+ int             wait(void);
+ void            wakeup(void*);
+ void            yield(void);
++int		lsof(void);
+ 
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+diff --git a/lsof.c b/lsof.c
+new file mode 100644
+index 0000000..c2e2237
+--- /dev/null
++++ b/lsof.c
+@@ -0,0 +1,10 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++#include "fcntl.h"
++
++int main(int argc, char* argv[])
++{
++	lsof();
++	exit();
++}
+diff --git a/proc.c b/proc.c
+index 806b1b1..2ed6dfd 100644
+--- a/proc.c
++++ b/proc.c
+@@ -6,6 +6,9 @@
+ #include "x86.h"
+ #include "proc.h"
+ #include "spinlock.h"
++#include "fs.h"
++#include "sleeplock.h"
++#include "file.h"
+ 
+ struct {
+   struct spinlock lock;
+@@ -532,3 +535,35 @@ procdump(void)
+     cprintf("\n");
+   }
+ }
++
++int lsof()
++{
++	struct file* fp;
++	struct proc *p;
++	sti();
++
++	acquire(&ptable.lock);
++	cprintf("PID \t fd \t type \t read/write \t \n");
++	int fd;
++
++	for(p=ptable.proc; p<&ptable.proc[NPROC];p++)
++	{
++		for(fd = 0; fd < NOFILE; fd++){
++    			if(p->ofile[fd]){
++				fp=p->ofile[fd];
++				char* type=0;
++				char* rw=0;
++				if(fp->type == FD_PIPE){type="pipe";}
++				else if(fp->type == FD_INODE){type="regular";}
++				if(fp->readable!=0 && fp->writable!=0){rw="RW";}
++				if(fp->readable!=0 && fp->writable==0){rw="R";}
++				if(fp->readable==0 && fp->writable!=0){rw="W";}
++				cprintf("%d \t %d \t %s \t %s \n",p->pid, fd, type, rw);
++					}
++						}
++	}
++
++	release(&ptable.lock);
++	return 22;
++}
++
+diff --git a/syscall.c b/syscall.c
+index ee85261..75838e2 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_lsof(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +127,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_lsof]   sys_lsof,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..32de84f 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_lsof   22
+diff --git a/sysproc.c b/sysproc.c
+index 0686d29..02078ec 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -89,3 +89,9 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++int sys_lsof(void)
++{
++	return lsof();
++}
++
+diff --git a/user.h b/user.h
+index 4f99c52..e48c576 100644
+--- a/user.h
++++ b/user.h
+@@ -23,6 +23,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int lsof(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..1ad3fcb 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(lsof)
